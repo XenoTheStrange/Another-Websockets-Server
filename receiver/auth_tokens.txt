@@ -1,4 +1,0 @@
-LEGEND, token,username
-Press F to pay respects...,admin
-0xDEADBEEF,debug
-useruseruser,unprivileged_user

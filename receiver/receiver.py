@@ -4,17 +4,15 @@ import asyncio
 import websockets
 import json
 import sys
-import hotReload
-import actions
-from customLogger import CustomLogger
 import ssl
-from errors import WebsocketError
+
+import actions
+from utils import CustomLogger, WebsocketError
+import config
 
 logger = CustomLogger("receiver", "debug")
 
-config = json.loads(open("config.json", "r").read())
-uri = config['listen_on'][0]
-port = config['listen_on'][1]
+uri, port = config.host_uri
 
 async def custom_handler(message, websocket):
     try:
@@ -60,7 +58,6 @@ async def message_handler(websocket):
         # Continue listening for incoming data after processing the current message
 
 async def main():
-    asyncio.ensure_future(hotReload.handler(sys.argv[0]))
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_context.verify_mode = ssl.CERT_NONE
     ssl_context.load_cert_chain("./ssl/cert.pem", keyfile="./ssl/key.pem")

@@ -4,6 +4,7 @@ import json
 import sys
 import os
 import subprocess
+import random
 
 from utils import WebsocketError, CustomLogger, file_receiver, bulk_sender, ThreadWithReturnValue, check_keys, restart_program, check_filename, mkdir_recursive
 from config import superusers, auth_tokens
@@ -65,7 +66,7 @@ def run_subprocess(command):
     except Exception as err:
         return f"[ERROR]:subprocess: {err}"
 
-async def wait_for_subprocess(obj):
+async def wait_for_subprocess(obj, username):
     missing_keys = check_keys(["data"],obj)
     if missing_keys:
         return missing_keys
@@ -155,7 +156,7 @@ async def do(obj, username, websocket):
             sys.exit()
         case "shell":
             if username in superusers:
-                return await wait_for_subprocess(obj)
+                return await wait_for_subprocess(obj, username)
         case "shell_task":
             if username in superusers:
                 return await start_task(obj, username, wait_for_subprocess)
@@ -177,7 +178,7 @@ async def do(obj, username, websocket):
             return await check_task(obj, username, websocket)
     return f"""[ERROR]: "{action}" is not a registered action"""
 
-def check_authorization(obj):
+async def check_authorization(obj):
     """Returns a username if the auth_token is valid."""
     if "auth_token" not in obj:
         return False
@@ -186,4 +187,5 @@ def check_authorization(obj):
         for entry in auth_tokens:
             if entry[0] == user_token:
                 return entry[1]
+    await asyncio.sleep(random.random()*2)
     return False

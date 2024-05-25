@@ -92,13 +92,6 @@ async def check_task(taskname, auth_token, websocket):
     payload = json.dumps(obj)
     return await send_message(payload, websocket)
 
-async def server_connect(host_url):
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    socket = websockets.connect(host_url, ssl=ssl_context)
-    return socket
-
 async def arbitrary_command(data, auth_token, websocket):
     obj = {
     'auth_token':auth_token,
@@ -107,6 +100,13 @@ async def arbitrary_command(data, auth_token, websocket):
     }
     payload = json.dumps(obj)
     return await send_message(payload, websocket)
+
+async def server_connect(host_url):
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    socket = websockets.connect(host_url, ssl=ssl_context)
+    return socket
 
 @handleErrors
 async def main(auth_token, action, data):

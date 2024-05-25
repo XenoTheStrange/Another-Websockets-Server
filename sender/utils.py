@@ -44,9 +44,9 @@ class CustomLogger:
     def critical(self, message: Any, data=""): return self._logger.critical(f'{message}')
 
 class file_receiver():
-    def __init__(self, obj, filename):
+    def __init__(self, obj, filename, savepath=f"{sys.argv[0]}/received_files"):
         self.fn = filename
-        self.savepath = "./received_files"
+        self.savepath = savepath
         self.parts_path = f"{self.savepath}/file_parts"
         self.total_parts = obj['part'].split("/")[1]
         self.parts_list = [] # this will be filled in when get_parts_list is called
@@ -85,6 +85,10 @@ class file_receiver():
         if os.path.exists(f"{self.savepath}/{self.fn}"):
             for file in self.parts_list:
                 os.remove(f"{self.savepath}/file_parts/{file}")
+                try:
+                    os.rmdir(f"{self.savepath}/file_parts/")
+                except Exception:
+                    pass
         return "[INFO]: File was written"
     async def main(self):
         await self.ensure_paths()

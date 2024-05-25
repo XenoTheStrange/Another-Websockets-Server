@@ -5,28 +5,47 @@ import sys
 import os
 import subprocess
 
-from utils import WebsocketError, CustomLogger, file_receiver, bulk_sender, ThreadWithReturnValue, check_keys, restart_program, check_filename
+from utils import WebsocketError, CustomLogger, file_receiver, bulk_sender, ThreadWithReturnValue, check_keys, restart_program, check_filename, mkdir_recursive
 from config import superusers, auth_tokens
 
 logger = CustomLogger("actions", "info")
 
 tasks:list = [] # (task, task_name, username)
 
-async def list_files(username, websocket):
-    files = os.listdir(f"./user_files/{username}")
+async def list_files(obj, username, websocket, admin=False):
+    if admin:
+        missing_keys = check_keys(["data"], obj) #username is an object
+        if missing_keys:
+            return missing_keys
+        path = obj['data'] if not obj['data'] == "" else "./"
+    else:
+        path = f"./user_files/{username}/"
+        if not os.path.exists(path):
+            mkdir_recursive(path)
+    try:
+        files = os.listdir(path)
+    except Exception as err:
+        raise WebsocketError(f"[ERROR]: {err}", websocket, path)
     files.sort()
-    files.remove("file_parts")
-    return ", ".join(files)
+    try:
+        files.remove("file_parts")
+    except Exception:
+        pass
+    return "\n".join(files)
 
-async def send_file(obj, username, websocket):
+async def send_file(obj, username, websocket, admin=False):
     missing_keys = check_keys(["filename"], obj)
     if missing_keys:
         return missing_keys
-    await check_filename(obj['filename'], websocket)
-    filepath = f"./user_files/{username}/{obj['filename']}"
+    if admin:
+        filepath = obj['filename']
+    else:
+        await check_filename(obj['filename'], websocket)
+        filepath = f"./user_files/{username}/{obj['filename']}"
     if not os.path.exists(filepath):
         raise WebsocketError("[ERROR]: There is no file at that path.", websocket, filepath)
     sender = bulk_sender(filepath, 1024*500)#this is a safe number for websockets. Still kind of small. Around 500kb worth of data (+ other parts of the request)
+    print(f"Sending file: {obj['filename']}")
     for chunk in sender:
         await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
@@ -35,16 +54,18 @@ async def send_file(obj, username, websocket):
             break
         #skip parts the server has indicated already exist
         next_chunk = response.split(": ")[1].split("/")[1]
-        print(next_chunk)
         while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
             next(sender)['part']
     return "[INFO] DONE SENDING"
 
 def run_subprocess(command):
-    proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return proc.stderr if not proc.stderr == b"" else proc.stdout
+    try:
+        proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return proc.stderr if not proc.stderr == b"" else proc.stdout
+    except Exception as err:
+        return f"[ERROR]:subprocess: {err}"
 
-async def wait_for_subprocess(obj, username):
+async def wait_for_subprocess(obj):
     missing_keys = check_keys(["data"],obj)
     if missing_keys:
         return missing_keys
@@ -134,18 +155,20 @@ async def do(obj, username, websocket):
             sys.exit()
         case "shell":
             if username in superusers:
-                return await wait_for_subprocess(obj, username)
-            else:
-                return "[ERROR]: NOT AUTHORIZED"
+                return await wait_for_subprocess(obj)
         case "shell_task":
             if username in superusers:
                 return await start_task(obj, username, wait_for_subprocess)
-            else:
-                return "[ERROR]: NOT AUTHORIZED"
         case "get_file":
             return await send_file(obj, username, websocket)
+        case "admin_get_file":
+            if username in superusers:
+                return await send_file(obj, username, websocket, admin=True)
         case "list_files":
-            return await list_files(username, websocket)
+            return await list_files(obj, username, websocket)
+        case "ls":
+            if username in superusers:
+                return await list_files(obj, username, websocket, admin=True)
         case "send_file":
             return await recv_file(obj, username, websocket)
         case "list_tasks":

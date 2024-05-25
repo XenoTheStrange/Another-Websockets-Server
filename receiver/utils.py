@@ -8,6 +8,18 @@ import math
 from typing import Any
 from threading import Thread
 
+def mkdir_recursive(path):
+    arr = path.split("/")
+    for i in range(len(arr)):
+        try:
+            tmp = "/".join(arr[0:i])
+            if tmp[-1] != "/":
+                tmp = tmp + "/"
+            #print(tmp)
+            os.mkdir(tmp)
+        except Exception:
+            continue
+
 def restart_program(filepath, auto=False):
     """Restarts the current program, with file objects and descriptorscleanup"""
     p = psutil.Process(os.getpid())
@@ -114,6 +126,10 @@ class file_receiver():
         if os.path.exists(f"{self.user_path}/{self.fn}"):
             for file in self.parts_list:
                 os.remove(f"{self.user_path}/file_parts/{file}")
+                try:
+                    os.rmdir(f"{self.user_path}/file_parts/")
+                except Exception:
+                    pass
         return "[INFO]: File was written"
     async def main(self):
         await self.ensure_paths()

@@ -49,10 +49,10 @@ async def send_file(filepath, auth_token, websocket):
         while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
             next(sender)['part']
 
-async def get_file(filename, auth_token, websocket):
+async def get_file(filename, auth_token, websocket, admin=False):
     obj = {
         'auth_token':auth_token,
-        'action': "get_file",
+        'action': "admin_get_file" if admin else "get_file",
         'filename': filename
     }
     payload = json.dumps(obj)
@@ -66,7 +66,7 @@ async def get_file(filename, auth_token, websocket):
             return response
         obj = json.loads(response)
         print(f"Got part: {obj['part']}")
-        recvfile = file_receiver(obj, filename)
+        recvfile = file_receiver(obj, filename.split("/")[-1], savepath=config.download_path)
         next = await recvfile.main()
         await websocket.send(next)
         response = await websocket.recv()
@@ -116,6 +116,8 @@ async def main(auth_token, action, data):
                 print(await send_file(data[0], auth_token, websocket))
             case "get_file":
                 print(await get_file(data[0], auth_token, websocket))
+            case "admin_get_file":
+                print(await get_file(data[0], auth_token, websocket, admin=True))
             case "shell":
                 print(await shell_command(data, auth_token, websocket))
             case "shell_task":

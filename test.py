@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 import sys
 import asyncio
-
 #import py script from another directory by adding it to the system path
 sys.path.append("./sender")
 import sender

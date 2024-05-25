@@ -37,7 +37,8 @@ async def send_file(filepath, auth_token, websocket):
     for chunk in sender:
         await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
-        logger.info(bytes(f"Received response: \"{response}\"","utf-8"))
+        logger.debug(bytes(f"Received response: \"{response}\"","utf-8"))
+        print(response)
         if "[ERROR]" in response:
             logger.error(bytes(f"An error occured: \"{response}\"" ,"utf-8"))
             return response
@@ -74,6 +75,7 @@ async def shell_command(data, auth_token, websocket):
     obj = {
     'auth_token':auth_token,
     'action': "shell",
+    'name': "shell_cmd",#if 2 commands are sent from the same person with this function, they'll end up with the same name and only 1 will be handle-able at a time serverside. TODO fix this.
     'data': "$&svdlm$&".join(data)
     }
     payload = json.dumps(obj)
@@ -111,12 +113,16 @@ async def main(auth_token, action, data):
                 print(await arbitrary_command(data, auth_token, websocket))
         await websocket.close()
 
+def print_help():
+    print("""USAGE: ./sender.py action [data]""")
+    exit()
+
 if __name__ == "__main__":
-    #This is a janky way of handling arguments; I haven't learned how to use a parser yet. TODO '
-    #This is also just testing functionality and I might just toss it out, idk.
-    if "help" in sys.argv[1] or "-h" in sys.argv[1] or "--h" in sys.argv[1] or "--help" in sys.argv[1]:
-        print("""USAGE: ./sender.py action [data]""")
-        exit()
+    #This is mainly for testing purposes as the module is intended to be used in scripts
+    if len(sys.argv) < 2:
+        print_help()
+    if sys.argv[1] in ["help","-h","--h","--help"]:
+        print_help()
     action = sys.argv[1] if len(sys.argv) > 1 else ""
     data = sys.argv[2:] if len(sys.argv) > 2 else ""
     client = asyncio.run(main(config.auth_token, action, data))

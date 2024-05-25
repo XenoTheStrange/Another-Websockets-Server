@@ -10,7 +10,7 @@ import actions
 from utils import CustomLogger, WebsocketError
 import config
 
-logger = CustomLogger("receiver", "debug")
+logger = CustomLogger("receiver", "info")
 
 uri, port = config.host_uri
 

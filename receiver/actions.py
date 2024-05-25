@@ -10,6 +10,8 @@ from config import superusers, auth_tokens
 
 logger = CustomLogger("actions", "info")
 
+tasks:list = []
+
 async def list_files(username, websocket):
     files = os.listdir(f"./user_files/{username}")
     files.sort()
@@ -28,7 +30,7 @@ async def send_file(obj, username, websocket):
     for chunk in sender:
         await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
-        logger.info(bytes(f"Received response: \"{response}\"","utf-8"))
+        logger.debug(bytes(f"Received response: \"{response}\"","utf-8"))
         if "[INFO]: File was written" in response:
             break
         #skip parts the server has indicated already exist
@@ -42,25 +44,27 @@ def run_subprocess(command):
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return proc.stderr if not proc.stderr == b"" else proc.stdout
 
-async def wait_for_subprocess(obj={}, cmd_internal=False):
-    if cmd_internal:
-        command = cmd_internal
-    else:
-        missing_keys = check_keys(["data"],obj)
-        if missing_keys:
-            return missing_keys
-        command = obj['data'].split("$&svdlm$&")
-        thread = ThreadWithReturnValue(target=run_subprocess, args=[command])
-        thread.start()
-        while True:
-            await asyncio.sleep(0.1)
-            if not thread.is_alive():
-                try:
-                    return thread.join().decode()
-                except Exception:
-                    return thread.join()
-            else:
-                await asyncio.sleep(1)
+async def wait_for_subprocess(obj, username):
+    global tasks
+    missing_keys = check_keys(["data"],obj)
+    if missing_keys:
+        return missing_keys
+    command = obj['data'].split("$&svdlm$&")
+    thread = ThreadWithReturnValue(target=run_subprocess, args=[command])
+    thread.start()
+    for i in range(2):
+        await asyncio.sleep(1)
+        if not thread.is_alive():
+            try:
+                return thread.join().decode()
+            except Exception:
+                return thread.join()
+        else:
+            await asyncio.sleep(1)
+    #if we don't return from that then the thread is still running and needs to be added to the task list.
+    thread.name = obj['name']
+    tasks.append((thread, username))
+    return "[INFO]: Task started."
 
 async def recv_file(obj, username, websocket):
     missing_keys = check_keys(["filename", "data", "part"],obj)
@@ -68,6 +72,38 @@ async def recv_file(obj, username, websocket):
         return missing_keys
     recvfile = file_receiver(obj, username, websocket)
     return await recvfile.main()
+
+async def list_tasks(username, websocket):#CURRENT
+    global tasks
+    lst = []
+    for task in tasks:
+        if task[1] == username:
+            lst.append(task[0].name)
+    if lst == []:
+        return "No tasks remain"
+    return ", ".join(lst)
+
+async def check_task(obj, username, websocket):
+    global tasks
+    missing_keys = check_keys(["data"],obj)
+    if missing_keys:
+        return missing_keys
+    taskname = obj['data']
+    for task in tasks:
+        thread = task[0]
+        if task[1] == username and thread.name == taskname:
+            if thread.is_alive():
+                return "[INFO:] Task is still running."
+            #if we haven't returned yet then the task is done and we need to send its return value and remove it from the task list.
+            tasks.remove(task)
+            try:
+                return thread.join().decode()
+            except Exception as err:
+                logger.error(err)
+                return thread.join()
+    #if we finished going through the tasks without returning than there was no username/taskname match
+    return f"There is no task with that name: {taskname}"
+
 
 async def do(obj, username, websocket):
     action = obj['action'].lower()
@@ -85,13 +121,13 @@ async def do(obj, username, websocket):
             await websocket.close()
             restart_program(sys.argv[0])
         case "kill" | "stop":
-            logger.info("[INFO]: Server shutting down gracefully.")
+            logger.info(f"[INFO]: Server kill received from {username}")
             await websocket.send("[INFO]: Server will stop.")
             await websocket.close()
-            exit()
+            sys.exit()
         case "shell":
             if username in superusers:
-                return await wait_for_subprocess(obj)
+                return await wait_for_subprocess(obj, username)
             else:
                 return "[ERROR]: NOT AUTHORIZED"
         case "get_file":
@@ -100,6 +136,10 @@ async def do(obj, username, websocket):
             return await list_files(username, websocket)
         case "send_file":
             return await recv_file(obj, username, websocket)
+        case "list_tasks":
+            return await list_tasks(username, websocket)
+        case "check_task":
+            return await check_task(obj, username, websocket)
     return f"""[ERROR]: "{action}" is not a registered action"""
 
 def check_authorization(obj):

@@ -121,6 +121,7 @@ async def send_file(obj, username, websocket):
             break
         #skip parts the server has indicated already exist
         next_chunk = response.split(": ")[1].split("/")[1]
+        print(next_chunk)
         while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
             next(sender)['part']
     return "[INFO] DONE SENDING"

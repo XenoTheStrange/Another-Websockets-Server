@@ -12,7 +12,7 @@ import ssl
 
 logger = CustomLogger("sender", "info")
 
-host_url = "wss://127.0.0.1:6789"
+host_url = "wss://192.168.1.30:6789"
 auth_token = "0xDEADBEEF" #0xDEADBEEF
 
 def handleErrors(func):
@@ -135,15 +135,19 @@ async def get_file(filename, auth_token, websocket):
     payload = json.dumps(obj)
     await websocket.send(payload)
     response = await websocket.recv()
-    while "[ERROR]" not in response and "DONE" not in response:
+    while True:
+        if "[ERROR]" in response:
+            print(response)
+            break
+        if "[INFO] DONE SENDING" in response:
+            print("File Received.")
+            return
         obj = json.loads(response)
         print(f"Got part: {obj['part']}")
         recvfile = file_receiver(obj, filename)
         next = await recvfile.main()
         await websocket.send(next)
         response = await websocket.recv()
-    if "[ERROR]" in response:
-        print(response)
 
 @handleErrors
 async def main(auth_token, action, data):

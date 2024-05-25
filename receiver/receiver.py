@@ -10,7 +10,7 @@ from customLogger import CustomLogger
 import ssl
 from errors import WebsocketError
 
-logger = CustomLogger("receiver", "info")
+logger = CustomLogger("receiver", "debug")
 
 config = json.loads(open("config.json", "r").read())
 uri = config['listen_on'][0]

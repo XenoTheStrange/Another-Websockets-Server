@@ -38,7 +38,6 @@ async def send_file(filepath, auth_token, websocket):
         await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
         logger.debug(bytes(f"Received response: \"{response}\"","utf-8"))
-        print(response)
         if "[ERROR]" in response:
             logger.error(bytes(f"An error occured: \"{response}\"" ,"utf-8"))
             return response
@@ -64,6 +63,7 @@ async def get_file(filename, auth_token, websocket, admin=False):
             break
         if "[INFO] DONE SENDING" in response:
             return response
+        print(response)
         obj = json.loads(response)
         print(f"Got part: {obj['part']}")
         recvfile = file_receiver(obj, filename.split("/")[-1], savepath=config.download_path)

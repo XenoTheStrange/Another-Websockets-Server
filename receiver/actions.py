@@ -9,7 +9,10 @@ import random
 from utils import WebsocketError, CustomLogger, file_receiver, bulk_sender, ThreadWithReturnValue, check_keys, restart_program, check_filename, mkdir_recursive
 from config import superusers, auth_tokens
 
-logger = CustomLogger("actions", "info")
+import importlib
+sys.path.append("./actions")
+
+logger = CustomLogger("actions", "debug")
 
 tasks:list = [] # (task, task_name, username)
 
@@ -34,31 +37,6 @@ async def list_files(obj, username, websocket, admin=False):
         pass
     return "\n".join(files)
 
-async def send_file(obj, username, websocket, admin=False):
-    missing_keys = check_keys(["filename"], obj)
-    if missing_keys:
-        return missing_keys
-    if admin:
-        filepath = obj['filename']
-    else:
-        await check_filename(obj['filename'], websocket)
-        filepath = f"./user_files/{username}/{obj['filename']}"
-    if not os.path.exists(filepath):
-        raise WebsocketError("[ERROR]: There is no file at that path.", websocket, filepath)
-    sender = bulk_sender(filepath, 1024*500)#this is a safe number for websockets. Still kind of small. Around 500kb worth of data (+ other parts of the request)
-    print(f"Sending file: {obj['filename']}")
-    for chunk in sender:
-        await websocket.send(json.dumps(chunk))
-        response = await websocket.recv()
-        logger.debug(bytes(f"Received response: \"{response}\"","utf-8"))
-        if "[INFO]: File was written" in response:
-            break
-        #skip parts the server has indicated already exist
-        next_chunk = response.split(": ")[1].split("/")[1]
-        while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
-            next(sender)['part']
-    return "[INFO] DONE SENDING"
-
 def run_subprocess(command):
     try:
         proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -82,13 +60,6 @@ async def wait_for_subprocess(obj, username):
         except Exception:
             return thread.join()
         await asyncio.sleep(1)
-
-async def recv_file(obj, username, websocket):
-    missing_keys = check_keys(["filename", "data", "part"],obj)
-    if missing_keys:
-        return missing_keys
-    recvfile = file_receiver(obj, username, websocket)
-    return await recvfile.main()
 
 async def list_tasks(username, websocket):#CURRENT
     global tasks
@@ -134,18 +105,35 @@ async def check_task(obj, username, websocket):
     return f"There is no task with that name: {taskname}"
 
 
+async def act(obj, username, websocket):
+    #Check if the action is a script in ./actions
+    custom_modules = [i for i in os.listdir("./actions") if ".py" in i]
+    if not f"{obj['action']}.py" in custom_modules:
+        return str(custom_modules)
+
+    # Import called script as module
+    spec = importlib.util.spec_from_file_location(
+        obj['action'], f"./actions/{obj['action']}.py")
+    called_script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(called_script)
+
+    # Call main function
+    tmp = await called_script.main(obj, username, websocket)
+    return tmp
+
 async def do(obj, username, websocket):
     action = obj['action'].lower()
     data = obj['data'] if "data" in obj else ""
     logger.debug(f"""user: {username}, action: {action}, data: {data} """)
-    match action:
+    return await act(obj, username, websocket)
+    """match action:
         case "ping":
             return "ping"
         case "echo":
             return json.dumps(obj)
         case "whoami":
             return username
-        case "restart":
+        case "restart": #DONE
             await websocket.send("[INFO]: Server will restart")
             await websocket.close()
             restart_program(sys.argv[0])
@@ -160,7 +148,7 @@ async def do(obj, username, websocket):
         case "shell_task":
             if username in superusers:
                 return await start_task(obj, username, wait_for_subprocess)
-        case "get_file":
+        case "get_file": #DONE
             return await send_file(obj, username, websocket)
         case "admin_get_file":
             if username in superusers:
@@ -170,13 +158,14 @@ async def do(obj, username, websocket):
         case "ls":
             if username in superusers:
                 return await list_files(obj, username, websocket, admin=True)
-        case "send_file":
+        case "send_file": #DONE
             return await recv_file(obj, username, websocket)
         case "list_tasks":
             return await list_tasks(username, websocket)
         case "check_task":
             return await check_task(obj, username, websocket)
-    return f"""[ERROR]: "{action}" is not a registered action"""
+    return f"[ERROR]: "{action}" is not a registered action"
+    """
 
 async def check_authorization(obj):
     """Returns a username if the auth_token is valid."""

@@ -132,6 +132,7 @@ class file_receiver():
                     pass
         return "[INFO]: File was written"
     async def main(self):
+        print("RECEIVING FILE PART")
         await self.ensure_paths()
         await check_filename(self.fn, self.socket)
         await self.write_part()

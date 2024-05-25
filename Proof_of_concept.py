@@ -6,7 +6,7 @@ sys.path.append("./sender")
 import sender
 
 
-host_url = "wss://192.168.1.32:6789"
+host_url = "wss://192.168.1.31:6789"
 api_key = "0xDEADBEEF"
 
 """Edit this function to start the tasks you need"""

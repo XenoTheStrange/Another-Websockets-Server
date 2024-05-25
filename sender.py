@@ -2,15 +2,18 @@
 
 import asyncio
 import websockets
-from time import sleep
 import json
 import sys
-import base64
 from customLogger import CustomLogger
+import base64
+import os
+import math
+import ssl
 
 logger = CustomLogger("sender", "info")
 
-host_url = "ws://localhost:6789"
+#host_url = "ws://localhost:6789"
+host_url = "wss://127.0.0.1:6789"
 auth_token = "0xDEADBEEF" #0xDEADBEEF
 
 def handleErrors(func):
@@ -18,9 +21,9 @@ def handleErrors(func):
         try:
             await func(*args, **kwargs)
         except OSError as err:
-            logger.error("Connection failed")
-        except websockets.exceptions.ConnectionClosedError:
-            logger.error("ConnectionClosedUnexpected")
+            logger.error(err)
+        #except websockets.exceptions.ConnectionClosedError:
+        #    logger.error("ConnectionClosedUnexpected")
         except websockets.exceptions.ConnectionClosedOK:
             logger.error("ConnectionClosedOK")
     return inner_function
@@ -28,23 +31,67 @@ def handleErrors(func):
 def create_payload(data):
     return json.dumps(data)
 
+def bulk_sender(filepath, chunk_size):
+    with open(filepath, "rb") as f:
+        file_data = f.read()
+        size = os.stat(filepath).st_size
+        total_chunks = math.ceil(size/chunk_size)
+        payload = {
+            'auth_token':auth_token,
+            'action': "send_file",
+            'filename': filepath.split("/")[-1],
+            'data': "",
+            'part': ""
+        }
+        part = 1
+        while True:
+            if len(file_data) > 0:
+                payload['data'] = base64.b64encode(file_data[:chunk_size]).decode()
+                payload['part'] = f"{part}/{total_chunks}"
+                part+=1
+                yield payload
+                file_data = file_data[chunk_size:]
+            else: break
+
 async def send_message(payload, websocket):
+    try:
         await websocket.send(bytes(payload, "utf-8"))
-        logger.info(bytes(f"Sent Message: {payload}","utf-8"))
+        response = await websocket.recv()
+        logger.debug(bytes(f"Received response: \"{response}\"","utf-8"))
+        print(str(response))
+    except TimeoutError:
+        logger.error("Connection timed out. Host is busy.")
+
+async def send_file(filepath, auth_token, websocket):
+    sender = bulk_sender(filepath, 1024*500)#this is a safe number for websockets. Still kind of
+    for chunk in sender:
+        await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
         logger.info(bytes(f"Received response: \"{response}\"","utf-8"))
-        print(str(response))
+        if "[INFO]: File was written" in response:
+            break
+        #skip parts the server has indicated already exist
+        next_chunk = response.split(": ")[1].split("/")[1]
+        while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
+            next(sender)['part']
 
 @handleErrors
 async def main(auth_token, action, data):
-    async with websockets.connect(host_url) as websocket:
-        data = {
-            'auth_token':auth_token,
-            'action': action,
-            'data': data
-            }
-        payload = create_payload(data)
-        await send_message(payload, websocket)
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    async with websockets.connect(host_url, ssl=ssl_context) as websocket:
+        match action:
+            case "send_file":
+                await send_file(data, auth_token, websocket)
+            case _:
+                obj = {
+                    'auth_token':auth_token,
+                    'action': action,
+                    'data': data
+                }
+                payload = create_payload(obj)
+                await send_message(payload, websocket)
         await websocket.close()
 
 if __name__ == "__main__":

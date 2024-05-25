@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import os
-import sys
 import psutil as yeet
 from customLogger import CustomLogger
 
@@ -18,7 +17,6 @@ def restart_program(filepath, auto=False):
             os.close(handler.fd)
     except Exception as e:
         logging.error(e)
-    python=sys.executable
     os.execl(filepath, filepath, "restart")
 
 def read_file(filepath):

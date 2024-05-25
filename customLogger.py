@@ -27,7 +27,8 @@ class CustomLogger:
         self._logger = logging.getLogger(self._name)
         # Add file handler
         current_dir = os.path.dirname(__file__)
-        if not os.path.exists(os.path.join(current_dir, 'logs')): os.mkdir(os.path.join(current_dir, 'logs'))
+        if not os.path.exists(os.path.join(current_dir, 'logs')):
+            os.mkdir(os.path.join(current_dir, 'logs'))
         log_filename = os.path.join(current_dir, f'logs/{self._name}.log')
         file_handler = logging.FileHandler(log_filename, mode='a')
         file_handler.setLevel(logging.DEBUG)

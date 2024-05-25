@@ -3,40 +3,53 @@
 import asyncio
 import websockets
 import json
-import base64
-import subprocess
 import sys
 import hotReload
 import actions
 from customLogger import CustomLogger
+import ssl
 
 logger = CustomLogger("receiver", "info")
 
-starting_servers = [
-    "127.0.0.1", 6789,
-]
+config = json.loads(open("config.json", "r").read())
+uri = config['listen_on'][0]
+port = config['listen_on'][1]
 
 class WebsocketError(Exception):
     def __init__(self, message, socket, data=""):
         super().__init__(message)
         self.socket = socket
         self.message = message
-        if not data == "":
+        if data == "":
+            self.data = ""
+        else:
             self.data = f": data:{data}"
 
 async def custom_handler(message, websocket):
-    try: obj = json.loads(message)
-    except Exception: raise WebsocketError("Failed to decode JSON payload", websocket)
+    try:
+        obj = json.loads(message)
+    except Exception as err:
+        #raise WebsocketError("Failed to decode JSON payload", websocket)
+        print("DEBUG")
+        print(message)
+        raise err
     username = actions.check_authorization(obj)
-    if not username: raise WebsocketError("AUTH FAIL", websocket, json.dumps(obj))
-    if not "action" in obj: raise WebsocketError("'action' parameter missing from request", websocket)
-    if not type(obj['action']) == str: raise WebsocketError("'action' parameter missing from request", websocket)
+    if not username:
+        raise WebsocketError("AUTH FAIL", websocket, json.dumps(obj))
+    if "action" not in obj:
+        raise WebsocketError("'action' parameter missing from request", websocket)
+    if not isinstance(obj['action'], str):
+        raise WebsocketError("'action' parameter missing from request", websocket)
     return await actions.do(obj, username, websocket)
 
 async def process_message(websocket):
     message = await websocket.recv()
-    logger.info(b"Received message: " + message)
-    return await custom_handler(message, websocket)
+    try: message = bytes(message, "ascii")
+    except TypeError: pass
+    logger.debug(b"Received message: " + message)
+    response = await custom_handler(message, websocket)
+    logger.debug(f"Sending response: \"{response}\"")
+    await websocket.send(str(response))
 
 def msgErrorHandler(func):
     async def inner_function(*args, **kwargs):
@@ -44,28 +57,29 @@ def msgErrorHandler(func):
                 await func(*args, **kwargs)
             except websockets.exceptions.ConnectionClosed:
                 pass
-            except ValueError as err:
-                websocket.send(f"The following error occurred:\n{err}")
             except WebsocketError as err:
                 await err.socket.send(err.message)
-                logger.error(err.message + f"{err.data}")
+                logger.error(err.message + f" data: {err.data}")
     return inner_function
 
 @msgErrorHandler
 async def message_handler(websocket):
-    global messages_recieved
     while True:
-        response = await process_message(websocket)
-        logger.info(f"Sending response: \"{response}\"")
-        await websocket.send(str(response))
+        await process_message(websocket)
         # Continue listening for incoming data after processing the current message
 
 async def main():
     asyncio.ensure_future(hotReload.handler(sys.argv[0]))
-    async with websockets.serve(message_handler, *starting_servers, ping_interval=None):
-        await asyncio.Future()  # Run forever (or until you cancel the server)
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_context.verify_mode = ssl.CERT_NONE
+    ssl_context.load_cert_chain("./ssl/cert.pem", keyfile="./ssl/key.pem")
+    async with websockets.serve(message_handler, uri, port, ping_interval=None, ssl=ssl_context):
+        await asyncio.Future()
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "restart": logger.info("Server Restarted");sys.argv[1]==""
-    else: logger.info("Server Started")
+    if len(sys.argv) > 1 and sys.argv[1] == "restart":
+        logger.info("Server Restarted")
+        sys.argv[1]==""
+    else:
+        logger.info("Server Started")
     client = asyncio.run(main())

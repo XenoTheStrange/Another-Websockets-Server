@@ -10,7 +10,7 @@ from config import superusers, auth_tokens
 
 logger = CustomLogger("actions", "info")
 
-tasks:list = []
+tasks:list = [] # (task, task_name, username)
 
 async def list_files(username, websocket):
     files = os.listdir(f"./user_files/{username}")
@@ -45,26 +45,21 @@ def run_subprocess(command):
     return proc.stderr if not proc.stderr == b"" else proc.stdout
 
 async def wait_for_subprocess(obj, username):
-    global tasks
     missing_keys = check_keys(["data"],obj)
     if missing_keys:
         return missing_keys
     command = obj['data'].split("$&svdlm$&")
     thread = ThreadWithReturnValue(target=run_subprocess, args=[command])
     thread.start()
-    for i in range(2):
+    while True:
+        await asyncio.sleep(0.1)
+        if thread.is_alive():
+            continue
+        try:
+            return thread.join().decode()
+        except Exception:
+            return thread.join()
         await asyncio.sleep(1)
-        if not thread.is_alive():
-            try:
-                return thread.join().decode()
-            except Exception:
-                return thread.join()
-        else:
-            await asyncio.sleep(1)
-    #if we don't return from that then the thread is still running and needs to be added to the task list.
-    thread.name = obj['name']
-    tasks.append((thread, username))
-    return "[INFO]: Task started."
 
 async def recv_file(obj, username, websocket):
     missing_keys = check_keys(["filename", "data", "part"],obj)
@@ -77,31 +72,43 @@ async def list_tasks(username, websocket):#CURRENT
     global tasks
     lst = []
     for task in tasks:
-        if task[1] == username:
-            lst.append(task[0].name)
+        if task[2] == username:
+            lst.append(task[1])
     if lst == []:
         return "No tasks remain"
     return ", ".join(lst)
 
+async def start_task(obj, username, func):
+    missing_keys = check_keys(["name"],obj)
+    if missing_keys:
+        return missing_keys
+    global tasks
+    for task in tasks:
+        if obj['name'] == task[1]:
+            return f"[ERROR]: A task with that name already exists: \"{obj['name']}\""
+    result = asyncio.create_task(func(obj, username))
+    tasks.append((result, obj['name'], username))
+    return "[INFO]: Task started."
+
 async def check_task(obj, username, websocket):
     global tasks
-    missing_keys = check_keys(["data"],obj)
+    missing_keys = check_keys(["data"], obj)
     if missing_keys:
         return missing_keys
     taskname = obj['data']
     for task in tasks:
-        thread = task[0]
-        if task[1] == username and thread.name == taskname:
-            if thread.is_alive():
-                return "[INFO:] Task is still running."
-            #if we haven't returned yet then the task is done and we need to send its return value and remove it from the task list.
+        result = task[0]
+        if task[2] == username and task[1] == taskname:
+            if not result.done():
+                return "[INFO]: Task is still running."
+            # if we haven't returned yet then the task is done and we need to send its return value and remove it from the task list.
             tasks.remove(task)
             try:
-                return thread.join().decode()
+                return result.result()
             except Exception as err:
                 logger.error(err)
-                return thread.join()
-    #if we finished going through the tasks without returning than there was no username/taskname match
+                return str(err)
+    # if we finished going through the tasks without returning then there was no username/taskname match
     return f"There is no task with that name: {taskname}"
 
 
@@ -128,6 +135,11 @@ async def do(obj, username, websocket):
         case "shell":
             if username in superusers:
                 return await wait_for_subprocess(obj, username)
+            else:
+                return "[ERROR]: NOT AUTHORIZED"
+        case "shell_task":
+            if username in superusers:
+                return await start_task(obj, username, wait_for_subprocess)
             else:
                 return "[ERROR]: NOT AUTHORIZED"
         case "get_file":

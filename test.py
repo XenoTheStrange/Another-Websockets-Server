@@ -12,8 +12,14 @@ api_key = "0xDEADBEEF"
 
 async def main():
     async with await sender.server_connect(host_url) as socket:
-        response = await sender.arbitrary_command(["get_files",""], api_key, socket)
-        print(response)
+        await sender.shell_command(["sleep","10"], api_key, socket, task=True, name="test")
+        #await sender.shell_command(["ls","./"], api_key, socket, task=True, name="test")
+        while True:
+            tmp = await sender.check_task("test", api_key, socket)
+            print(tmp)
+            if "still running" not in tmp:
+                break
+            await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -71,16 +71,26 @@ async def get_file(filename, auth_token, websocket):
         await websocket.send(next)
         response = await websocket.recv()
 
-async def shell_command(data, auth_token, websocket):
+async def shell_command(data, auth_token, websocket, task=False, name="shell_cmd"):
+    shelltype = "shell" if task == False else "shell_task"
     obj = {
     'auth_token':auth_token,
-    'action': "shell",
-    'name': "shell_cmd",#if 2 commands are sent from the same person with this function, they'll end up with the same name and only 1 will be handle-able at a time serverside. TODO fix this.
+    'action': shelltype,
+    'name': name,
     'data': "$&svdlm$&".join(data)
     }
     payload = json.dumps(obj)
     response = await send_message(payload, websocket)
     return response
+
+async def check_task(taskname, auth_token, websocket):
+    obj = {
+    'auth_token':auth_token,
+    'action': "check_task",
+    'data': taskname
+    }
+    payload = json.dumps(obj)
+    return await send_message(payload, websocket)
 
 async def server_connect(host_url):
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -108,6 +118,8 @@ async def main(auth_token, action, data):
                 print(await get_file(data[0], auth_token, websocket))
             case "shell":
                 print(await shell_command(data, auth_token, websocket))
+            case "shell_task":
+                print(await shell_command(data, auth_token, websocket, task=True))
             case _:
                 data = [action]+[data] if isinstance(data,str) else [action]+data #make sure data variable is a list of strings
                 print(await arbitrary_command(data, auth_token, websocket))

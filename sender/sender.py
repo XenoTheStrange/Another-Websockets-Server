@@ -42,7 +42,7 @@ async def send_file(filepath, auth_token, websocket):
             logger.error(bytes(f"An error occured: \"{response}\"" ,"utf-8"))
             return response
         if "[INFO]: File was written" in response:
-            return "OK"
+            return response
         #skip parts the server has indicated already exist
         next_chunk = response.split(": ")[1].split("/")[1]
         while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
@@ -63,7 +63,6 @@ async def get_file(filename, auth_token, websocket, admin=False):
             break
         if "[INFO] DONE SENDING" in response:
             return response
-        print(response)
         obj = json.loads(response)
         print(f"Got part: {obj['part']}")
         recvfile = file_receiver(obj, filename.split("/")[-1], savepath=config.download_path)
@@ -75,7 +74,8 @@ async def shell_command(data, auth_token, websocket, task=False, name="shell_cmd
     shelltype = "shell" if task == False else "shell_task"
     obj = {
     'auth_token':auth_token,
-    'action': shelltype,
+    'action': "tasker",
+    'tasker-cmd': shelltype,
     'name': name,
     'data': "$&svdlm$&".join(data)
     }

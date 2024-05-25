@@ -7,7 +7,7 @@ import sys
 import ssl
 
 import actions
-from utils import CustomLogger, WebsocketError
+from utils import CustomLogger, WebsocketError, check_authorization
 import config
 
 logger = CustomLogger("receiver", "info")
@@ -19,7 +19,7 @@ async def custom_handler(message, websocket):
         obj = json.loads(message)
     except Exception:
         raise WebsocketError("Failed to decode JSON payload", websocket)
-    username = await actions.check_authorization(obj)
+    username = await check_authorization(obj)
     if not username:
         raise WebsocketError("AUTH FAIL", websocket, json.dumps(obj))
     if "action" not in obj:

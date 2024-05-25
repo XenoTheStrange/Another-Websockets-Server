@@ -9,7 +9,7 @@ from utils import check_filename, WebsocketError, bulk_sender, check_keys, Custo
 
 logger = CustomLogger("actions", "debug")
 
-async def main(*args):
+async def main(*args, **kwargs):
     print(args)
     obj = args[0]
     username = args[1]

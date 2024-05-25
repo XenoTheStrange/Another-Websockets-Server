@@ -1,12 +1,13 @@
 #!/usr/bin/python3
 import os
-import psutil
 import logging
 import sys
 import base64
 import math
+import random
 from typing import Any
-from threading import Thread
+
+import config
 
 def mkdir_recursive(path):
     arr = path.split("/")
@@ -20,13 +21,6 @@ def mkdir_recursive(path):
         except Exception:
             continue
 
-def restart_program(filepath, auto=False):
-    """Restarts the current program, with file objects and descriptorscleanup"""
-    p = psutil.Process(os.getpid())
-    for handler in p.open_files() + p.connections():
-        os.close(handler.fd)
-    os.execl(filepath, filepath, "restart")
-
 class WebsocketError(Exception):
     def __init__(self, message, socket, data=""):
         super().__init__(message)
@@ -35,7 +29,7 @@ class WebsocketError(Exception):
         if data == "":
             self.data = ""
         else:
-            self.data = f": data:{data}"
+            self.data = str(data)
 
 class CustomLogger:
     def __init__(self, name: str, logLevel):
@@ -161,17 +155,6 @@ def bulk_sender(filepath, chunk_size):
             else:
                 break
 
-class ThreadWithReturnValue(Thread):
-    def __init__(self, group=None, target=None, name=None,args=(), kwargs={}, Verbose=None):
-        Thread.__init__(self, group, target, name, args, kwargs)
-        self._return = None
-    def run(self):
-        if self._target is not None:
-            self._return = self._target(*self._args,**self._kwargs)
-    def join(self, *args):
-        Thread.join(self, *args)
-        return self._return
-
 def check_keys(keys, obj):
     missing=[]
     for key in keys:
@@ -181,3 +164,16 @@ def check_keys(keys, obj):
         return False
     out = " ".join([f"'{i}'," for i in missing])[:-1] # 'key', 'key2', 'key3' # [:-1] removes the end comma
     return f"""[ERROR]: Missing keys in json data: {out}"""
+
+async def check_authorization(obj):
+    """Returns a username if the auth_token is valid."""
+    if "auth_token" not in obj:
+        return False
+    else:
+        user_token = obj['auth_token']
+        for entry in config.auth_tokens:
+            if entry[0] == user_token:
+                return entry[1]
+    #If it fails, wait a bit to defeat timing attacks
+    await asyncio.sleep(random.random()*2)
+    return False

@@ -1,4 +1,6 @@
 #!/usr/bin/python3
 
-async def main(*args):
-    return "".join(args[0]['data'])
+import json
+
+async def main(*args, **kwargs):
+    return json.dumps(args[0])

@@ -7,9 +7,22 @@ import subprocess
 import hotReload
 from customLogger import CustomLogger
 import base64
-from receiver import WebsocketError
+from errors import WebsocketError
 import asyncio
 from threading import Thread
+import math
+
+logger = CustomLogger("actions", "info")
+
+async def check_filename(filename, websocket): #make sure the filename is safe, just a name and not a path
+    if "../" in filename:
+        raise WebsocketError("[ERROR]: Backward navigaion detected in the file path.", websocket, filename)
+    if "\\" in filename or "/" in filename:
+        raise WebsocketError("[ERROR]: Filename contains a path.", websocket, filename)
+    if filename == "":
+        raise WebsocketError("[ERROR]: Filename is empty.", websocket, filename)
+    if ".srres.part" in filename:
+        raise WebsocketError("[ERROR]: Filename cannot include \".srres.part\". This is a reserved keyword", websocket, filename)
 
 class file_receiver():
     def __init__(self, obj, username, websocket):
@@ -29,15 +42,6 @@ class file_receiver():
         await self.mk_path("./user_files")
         await self.mk_path(self.user_path)
         await self.mk_path(self.parts_path)
-    async def check_filename(self): #make sure the filename is safe, just a name and not a path
-        if "../" in self.fn:
-            raise WebsocketError("[ERROR]: Backward navigaion detected in the file path.", self.socket, self.fn)
-        if "\\" in self.fn or "/" in self.fn:
-            raise WebsocketError("[ERROR]: Filename contains a path.", self.socket, self.fn)
-        if self.fn == "":
-            raise WebsocketError("[ERROR]: Filename is empty.", self.socket, self.fn)
-        if ".srres.part" in self.fn:
-            raise WebsocketError("[ERROR]: Filename cannot include \".srres.part\". This is a reserved keyword", self.socket, self.fn)
     async def get_parts_list(self): #updates the object's parts list
         self.parts_list = [i for i in os.listdir(self.parts_path) if f"{self.fn}.srres.part" in i]
         self.parts_list.sort()
@@ -67,12 +71,59 @@ class file_receiver():
         return "[INFO]: File was written"
     async def main(self):
         await self.ensure_paths()
-        await self.check_filename()
+        await check_filename(self.fn, self.socket)
         await self.write_part()
         next_part = await self.get_next_part()
         if next_part is not None:
             return f"OK: {int(self.partstr)}/{next_part}/{self.total_parts}"
         return await self.assemble_file()
+
+def bulk_sender(filepath, chunk_size):
+    with open(filepath, "rb") as f:
+        file_data = f.read()
+        size = os.stat(filepath).st_size
+        total_chunks = math.ceil(size/chunk_size)
+        payload = {
+            'data': "",
+            'part': ""
+        }
+        part = 1
+        while True:
+            if len(file_data) > 0:
+                payload['data'] = base64.b64encode(file_data[:chunk_size]).decode()
+                payload['part'] = f"{part}/{total_chunks}"
+                part+=1
+                yield payload
+                file_data = file_data[chunk_size:]
+            else:
+                break
+
+async def list_files(username, websocket):
+    files = os.listdir(f"./user_files/{username}")
+    files.sort()
+    files.remove("file_parts")
+    return ", ".join(files)
+
+async def send_file(obj, username, websocket):
+    missing_keys = check_keys(["filename"], obj)
+    if missing_keys:
+        return missing_keys
+    await check_filename(obj['filename'], websocket)
+    filepath = f"./user_files/{username}/{obj['filename']}"
+    if not os.path.exists(filepath):
+        raise WebsocketError("[ERROR]: There is no file at that path.", websocket, filepath)
+    sender = bulk_sender(filepath, 1024*500)#this is a safe number for websockets. Still kind of small. Around 500kb worth of data (+ other parts of the request)
+    for chunk in sender:
+        await websocket.send(json.dumps(chunk))
+        response = await websocket.recv()
+        logger.info(bytes(f"Received response: \"{response}\"","utf-8"))
+        if "[INFO]: File was written" in response:
+            break
+        #skip parts the server has indicated already exist
+        next_chunk = response.split(": ")[1].split("/")[1]
+        while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
+            next(sender)['part']
+    return "[INFO] DONE SENDING"
 
 class ThreadWithReturnValue(Thread):
     def __init__(self, group=None, target=None, name=None,args=(), kwargs={}, Verbose=None):
@@ -84,8 +135,6 @@ class ThreadWithReturnValue(Thread):
     def join(self, *args):
         Thread.join(self, *args)
         return self._return
-
-logger = CustomLogger("actions", "info")
 
 def check_keys(keys, obj):
     missing=[]
@@ -117,13 +166,6 @@ async def wait_for_subprocess(obj={}, cmd_internal=False):
                 return thread.join()
             else:
                 await asyncio.sleep(1)
-
-async def get_file(obj, username):
-    missing_keys = check_keys(["filename"],obj)
-    if missing_keys:
-        return missing_keys
-    return json.dumps(obj)
-    #return "NOT IMPLEMENTED"
 
 async def recv_file(obj, username, websocket):
     missing_keys = check_keys(["filename", "data", "part"],obj)
@@ -157,7 +199,9 @@ async def do(obj, username, websocket):
             else:
                 return "[ERROR]: NOT AUTHORIZED"
         case "get_file":
-            return await get_file(obj, username)
+            return await send_file(obj, username, websocket)
+        case "list_files":
+            return await list_files(username, websocket)
         case "send_file":
             return await recv_file(obj, username, websocket)
     return f"""[ERROR]: "{action}" is not a registered action"""

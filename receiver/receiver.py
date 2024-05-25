@@ -8,22 +8,13 @@ import hotReload
 import actions
 from customLogger import CustomLogger
 import ssl
+from errors import WebsocketError
 
 logger = CustomLogger("receiver", "info")
 
 config = json.loads(open("config.json", "r").read())
 uri = config['listen_on'][0]
 port = config['listen_on'][1]
-
-class WebsocketError(Exception):
-    def __init__(self, message, socket, data=""):
-        super().__init__(message)
-        self.socket = socket
-        self.message = message
-        if data == "":
-            self.data = ""
-        else:
-            self.data = f": data:{data}"
 
 async def custom_handler(message, websocket):
     try:
@@ -39,8 +30,10 @@ async def custom_handler(message, websocket):
 
 async def process_message(websocket):
     message = await websocket.recv()
-    try: message = bytes(message, "ascii")
-    except TypeError: pass
+    try:
+        message = bytes(message, "ascii")
+    except TypeError:
+        pass
     logger.debug(b"Received message: " + message)
     response = await custom_handler(message, websocket)
     logger.debug(f"Sending response: \"{response}\"")
@@ -53,8 +46,11 @@ def msgErrorHandler(func):
             except websockets.exceptions.ConnectionClosed:
                 pass
             except WebsocketError as err:
-                await err.socket.send(err.message)
+                await err.socket.send(err.message + f" data: {err.data}")
                 logger.error(err.message + f" data: {err.data}")
+            except Exception as err:
+                print(type(err))
+                print("Unhandled Exception: " + str(err))
     return inner_function
 
 @msgErrorHandler

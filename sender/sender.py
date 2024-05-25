@@ -12,9 +12,8 @@ import ssl
 
 logger = CustomLogger("sender", "info")
 
-#host_url = "ws://localhost:6789"
 host_url = "wss://127.0.0.1:6789"
-auth_token = "Press F to pay respects..." #0xDEADBEEF
+auth_token = "0xDEADBEEF" #0xDEADBEEF
 
 def handleErrors(func):
     async def inner_function(*args, **kwargs):
@@ -27,6 +26,57 @@ def handleErrors(func):
         except websockets.exceptions.ConnectionClosedOK:
             logger.error("ConnectionClosedOK")
     return inner_function
+
+class file_receiver():
+    def __init__(self, obj, filename):
+        self.fn = filename
+        self.savepath = "./received_files"
+        self.parts_path = f"{self.savepath}/file_parts"
+        self.total_parts = obj['part'].split("/")[1]
+        self.parts_list = [] # this will be filled in when get_parts_list is called
+        self.partstr = obj['part'].split("/")[0].zfill(len(self.total_parts)) # the number of this part with zeros so array sorting works
+        self.filepath = f"{self.parts_path}/{self.fn}.srres.part.{self.partstr}"
+        self.data = obj['data']
+    async def mk_path(self, path): # helper function to avoid repetitive code in ensure_paths()
+        if not os.path.exists(path):
+            os.mkdir(path)
+    async def ensure_paths(self): #make sure folders exist
+        await self.mk_path(self.savepath)
+        await self.mk_path(self.parts_path)
+    async def get_parts_list(self): #updates the object's parts list
+        self.parts_list = [i for i in os.listdir(self.parts_path) if f"{self.fn}.srres.part" in i]
+        self.parts_list.sort()
+    async def write_part(self):
+        with open(self.filepath, "wb") as file:
+            file.write(bytes(self.data,"ascii"))
+    async def get_next_part(self): #returns the number for which part is needed next
+        await self.get_parts_list()
+        parts = [int(i.split(".")[-1]) for i in self.parts_list] #returns a list of numbers for each part we have
+        parts.sort()
+        for i, pnum in enumerate(parts):
+            if not i+1 == int(pnum):
+                return i+1
+            if len(parts) < int(self.total_parts):
+                return len(parts)+1
+        return None
+    async def assemble_file(self): #put that bad boy together and delete the parts
+        await self.get_parts_list()
+        with open(f"{self.savepath}/{self.fn}", "wb") as file:
+            for part in self.parts_list:
+                data = open(f"{self.parts_path}/{part}", "rb").read()
+                conv = base64.b64decode(data)
+                file.write(conv)
+        if os.path.exists(f"{self.savepath}/{self.fn}"):
+            for file in self.parts_list:
+                os.remove(f"{self.savepath}/file_parts/{file}")
+        return "[INFO]: File was written"
+    async def main(self):
+        await self.ensure_paths()
+        await self.write_part()
+        next_part = await self.get_next_part()
+        if next_part is not None:
+            return f"OK: {int(self.partstr)}/{next_part}/{self.total_parts}"
+        return await self.assemble_file()
 
 def bulk_sender(filepath, chunk_size):
     with open(filepath, "rb") as f:
@@ -61,11 +111,14 @@ async def send_message(payload, websocket):
         logger.error("Connection timed out. Host is busy.")
 
 async def send_file(filepath, auth_token, websocket):
-    sender = bulk_sender(filepath, 1024*500)#this is a safe number for websockets. Still kind of
+    sender = bulk_sender(filepath, 1024*500)#this is a safe number for websockets. Still kind of small. Around 500kb worth of data (+ other parts of the request)
     for chunk in sender:
         await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
         logger.info(bytes(f"Received response: \"{response}\"","utf-8"))
+        if "[ERROR]" in response:
+            print(response)
+            break
         if "[INFO]: File was written" in response:
             break
         #skip parts the server has indicated already exist
@@ -82,7 +135,15 @@ async def get_file(filename, auth_token, websocket):
     payload = json.dumps(obj)
     await websocket.send(payload)
     response = await websocket.recv()
-    print(response)
+    while "[ERROR]" not in response and "DONE" not in response:
+        obj = json.loads(response)
+        print(f"Got part: {obj['part']}")
+        recvfile = file_receiver(obj, filename)
+        next = await recvfile.main()
+        await websocket.send(next)
+        response = await websocket.recv()
+    if "[ERROR]" in response:
+        print(response)
 
 @handleErrors
 async def main(auth_token, action, data):
@@ -92,14 +153,14 @@ async def main(auth_token, action, data):
     async with websockets.connect(host_url, ssl=ssl_context) as websocket:
         match action:
             case "send_file":
-                await send_file(data, auth_token, websocket)
+                await send_file(data[0], auth_token, websocket)
             case "get_file":
-                await get_file(data, auth_token, websocket)
+                await get_file(data[0], auth_token, websocket)
             case _:
                 obj = {
                     'auth_token':auth_token,
                     'action': action,
-                    'data': data
+                    'data': " ".join(data)
                 }
                 payload = json.dumps(obj)
                 await send_message(payload, websocket)
@@ -111,5 +172,5 @@ if __name__ == "__main__":
         print("""USAGE: ./sender.py action [data]""")
         exit()
     action = sys.argv[1] if len(sys.argv) > 1 else ""
-    data = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+    data = sys.argv[2:] if len(sys.argv) > 2 else ""
     client = asyncio.run(main(auth_token, action, data))

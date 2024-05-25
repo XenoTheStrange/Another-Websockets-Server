@@ -14,7 +14,7 @@ logger = CustomLogger("sender", "info")
 
 #host_url = "ws://localhost:6789"
 host_url = "wss://127.0.0.1:6789"
-auth_token = "0xDEADBEEF" #0xDEADBEEF
+auth_token = "Press F to pay respects..." #0xDEADBEEF
 
 def handleErrors(func):
     async def inner_function(*args, **kwargs):
@@ -27,9 +27,6 @@ def handleErrors(func):
         except websockets.exceptions.ConnectionClosedOK:
             logger.error("ConnectionClosedOK")
     return inner_function
-
-def create_payload(data):
-    return json.dumps(data)
 
 def bulk_sender(filepath, chunk_size):
     with open(filepath, "rb") as f:
@@ -51,7 +48,8 @@ def bulk_sender(filepath, chunk_size):
                 part+=1
                 yield payload
                 file_data = file_data[chunk_size:]
-            else: break
+            else:
+                break
 
 async def send_message(payload, websocket):
     try:
@@ -75,6 +73,17 @@ async def send_file(filepath, auth_token, websocket):
         while int(chunk['part'].split("/")[0])+1 < int(next_chunk):
             next(sender)['part']
 
+async def get_file(filename, auth_token, websocket):
+    obj = {
+        'auth_token':auth_token,
+        'action': "get_file",
+        'filename': filename
+    }
+    payload = json.dumps(obj)
+    await websocket.send(payload)
+    response = await websocket.recv()
+    print(response)
+
 @handleErrors
 async def main(auth_token, action, data):
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -84,13 +93,15 @@ async def main(auth_token, action, data):
         match action:
             case "send_file":
                 await send_file(data, auth_token, websocket)
+            case "get_file":
+                await get_file(data, auth_token, websocket)
             case _:
                 obj = {
                     'auth_token':auth_token,
                     'action': action,
                     'data': data
                 }
-                payload = create_payload(obj)
+                payload = json.dumps(obj)
                 await send_message(payload, websocket)
         await websocket.close()
 

@@ -11,6 +11,69 @@ from receiver import WebsocketError
 import asyncio
 from threading import Thread
 
+class file_receiver():
+    def __init__(self, obj, username, websocket):
+        self.socket = websocket
+        self.fn = obj['filename']
+        self.user_path = f"./user_files/{username}"
+        self.parts_path = f"{self.user_path}/file_parts"
+        self.total_parts = obj['part'].split("/")[1]
+        self.parts_list = [] # this will be filled in when get_parts_list is called
+        self.partstr = obj['part'].split("/")[0].zfill(len(self.total_parts)) # the number of this part with zeros so array sorting works
+        self.filepath = f"{self.parts_path}/{self.fn}.srres.part.{self.partstr}"
+        self.data = obj['data']
+    async def mk_path(self, path): # helper function to avoid repetitive code in ensure_paths()
+        if not os.path.exists(path):
+            os.mkdir(path)
+    async def ensure_paths(self): #make sure folders exist
+        await self.mk_path("./user_files")
+        await self.mk_path(self.user_path)
+        await self.mk_path(self.parts_path)
+    async def check_filename(self): #make sure the filename is safe, just a name and not a path
+        if "../" in self.fn:
+            raise WebsocketError("[ERROR]: Backward navigaion detected in the file path.", self.socket, self.fn)
+        if "\\" in self.fn or "/" in self.fn:
+            raise WebsocketError("[ERROR]: Filename contains a path.", self.socket, self.fn)
+        if self.fn == "":
+            raise WebsocketError("[ERROR]: Filename is empty.", self.socket, self.fn)
+        if ".srres.part" in self.fn:
+            raise WebsocketError("[ERROR]: Filename cannot include \".srres.part\". This is a reserved keyword", self.socket, self.fn)
+    async def get_parts_list(self): #updates the object's parts list
+        self.parts_list = [i for i in os.listdir(self.parts_path) if f"{self.fn}.srres.part" in i]
+        self.parts_list.sort()
+    async def write_part(self):
+        with open(self.filepath, "wb") as file:
+            file.write(bytes(self.data,"ascii"))
+    async def get_next_part(self): #returns the number for which part is needed next
+        await self.get_parts_list()
+        parts = [int(i.split(".")[-1]) for i in self.parts_list] #returns a list of numbers for each part we have
+        parts.sort()
+        for i, pnum in enumerate(parts):
+            if not i+1 == int(pnum):
+                return i+1
+            if len(parts) < int(self.total_parts):
+                return len(parts)+1
+        return None
+    async def assemble_file(self): #put that bad boy together and delete the parts
+        await self.get_parts_list()
+        with open(f"{self.user_path}/{self.fn}", "wb") as file:
+            for part in self.parts_list:
+                data = open(f"{self.parts_path}/{part}", "rb").read()
+                conv = base64.b64decode(data)
+                file.write(conv)
+        if os.path.exists(f"{self.user_path}/{self.fn}"):
+            for file in self.parts_list:
+                os.remove(f"{self.user_path}/file_parts/{file}")
+        return "[INFO]: File was written"
+    async def main(self):
+        await self.ensure_paths()
+        await self.check_filename()
+        await self.write_part()
+        next_part = await self.get_next_part()
+        if next_part is not None:
+            return f"OK: {int(self.partstr)}/{next_part}/{self.total_parts}"
+        return await self.assemble_file()
+
 class ThreadWithReturnValue(Thread):
     def __init__(self, group=None, target=None, name=None,args=(), kwargs={}, Verbose=None):
         Thread.__init__(self, group, target, name, args, kwargs)
@@ -24,30 +87,29 @@ class ThreadWithReturnValue(Thread):
 
 logger = CustomLogger("actions", "info")
 
-tasks = [] #This will contain subprocess tasks or something like that.
-
 def check_keys(keys, obj):
     missing=[]
     for key in keys:
-        if key not in obj: missing.append(key)
-    if missing == []: return False
+        if key not in obj:
+            missing.append(key)
+    if missing == []:
+        return False
     out = " ".join([f"'{i}'," for i in missing])[:-1] # 'key', 'key2', 'key3' # [:-1] removes the end comma
     return f"""[ERROR]: Missing keys in json data: {out}"""
 
-def thread_subprocess(command):
+def run_subprocess(command):
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return proc.stderr if not proc.stderr == b"" else proc.stdout
 
 async def wait_for_subprocess(obj={}, cmd_internal=False):
-    """This will block the main event loop until the subprocess returns. Need to implement with threading and polling."""
     if cmd_internal:
         command = cmd_internal
     else:
         missing_keys = check_keys(["data"],obj)
-        if missing_keys: return missing_keys
+        if missing_keys:
+            return missing_keys
         command = obj['data'].split(" ")
-    try:
-        thread = ThreadWithReturnValue(target=thread_subprocess, args=[command])
+        thread = ThreadWithReturnValue(target=run_subprocess, args=[command])
         thread.start()
         while True:
             await asyncio.sleep(0.1)
@@ -55,76 +117,32 @@ async def wait_for_subprocess(obj={}, cmd_internal=False):
                 return thread.join()
             else:
                 await asyncio.sleep(1)
-        #proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        #return proc.stderr if not proc.stderr == b"" else proc.stdout
-    except Exception as err:
-        return err
 
-async def get_file(obj):
-    return "NOT IMPLEMENTED"
+async def get_file(obj, username):
+    missing_keys = check_keys(["filename"],obj)
+    if missing_keys:
+        return missing_keys
+    return json.dumps(obj)
+    #return "NOT IMPLEMENTED"
 
-async def assemble_file(filename, user_path, parts_list):
-    parts_list.sort()
-    parts_path = f"{user_path}/file_parts"
-    with open(f"{user_path}/{filename}", "wb") as file:
-        for part in parts_list:
-            data = open(f"{parts_path}/{part}", "rb").read()
-            conv = base64.b64decode(data)
-            file.write(conv)
-    if os.path.exists(f"{user_path}/{filename}"):
-        for file in parts_list:
-            os.remove(f"{user_path}/file_parts/{file}")
-        return "[INFO]: File was written"
-
-async def get_next_part(parts_list, total_parts):
-    parts = [int(i.split(".")[-1]) for i in parts_list]
-    parts.sort()
-    for i, pnum in enumerate(parts):
-        if not i+1 == int(pnum): return i+1
-    if len(parts) < int(total_parts): return len(parts)+1
-    return None
-
-async def recv_file(obj, username, websocket): #next step is to recieve file chunks and save them to disk temporarily and if they're part 10/10 then assemble the file in question'
+async def recv_file(obj, username, websocket):
     missing_keys = check_keys(["filename", "data", "part"],obj)
-    if missing_keys: return missing_keys
-    user_path = f"./user_files/{username}"
-    parts_path = f"{user_path}/file_parts"
-    filename = obj['filename']
-    if not os.path.exists(user_path): os.mkdir(user_path)
-    if not os.path.exists(parts_path): os.mkdir(parts_path)
-    #TODO
-    if "../" in filename: raise WebsocketError("[ERROR]: Backward navigaion detected in the file path.", websocket, filename)
-    if "\\" in filename or "/" in filename: raise WebsocketError("[ERROR]: Filename contains a path", websocket, filename)
-    if filename[-1] == "/": raise WebsocketError("[ERROR]: Path does not include a file name.", websocket, filename)
-    if ".srres.part" in filename: raise WebsocketError("[ERROR]: filename cannot include \".srres.part\". This is a reserved keyword", websocket, filename)
-    if filename[0] == "/": filename = filename[1:]
-    total_parts = obj['part'].split("/")[1]
-    parts_list = [i for i in os.listdir(parts_path) if f"{filename}.srres.part" in i]
-    part = obj['part'].split("/")[0].zfill(len(total_parts)) #the zfill is necessary or the tmp files are assembled incorrectly
-    full_filepath = f"{parts_path}/{filename}.srres.part.{part}"
-    with open(full_filepath, "wb") as file:
-        file.write(bytes(obj['data'],"ascii"))
-    parts_list = [i for i in os.listdir(parts_path) if f"{filename}.srres.part" in i]
-    next_part = await get_next_part(parts_list, total_parts)
-    if next_part is not None:
-        return f"OK: {int(part)}/{next_part}/{total_parts}"
-    return await assemble_file(filename, user_path, parts_list)
-
-# async def ffmpeg_delegate(obj):
-#     return "NOT IMPLEMENTED"
-#     missing_keys = check_keys(["filepath","data"],obj)
-#     if missing_keys: return missing_keys
-#     command = ["ffmpeg"] + obj['command'].split(" ")
-#     return await wait_for_subprocess(cmd_internal=command) #this will be used to call ffmpeg
+    if missing_keys:
+        return missing_keys
+    recvfile = file_receiver(obj, username, websocket)
+    return await recvfile.main()
 
 async def do(obj, username, websocket):
     action = obj['action'].lower()
     data = obj['data'] if "data" in obj else ""
     logger.debug(f"""user: {username}, action: {action}, data: {data} """)
     match action:
-        case "ping": return "ping"
-        case "echo": return json.dumps(obj)
-        case "whoami": return username
+        case "ping":
+            return "ping"
+        case "echo":
+            return json.dumps(obj)
+        case "whoami":
+            return username
         case "restart":
             await websocket.send("[INFO]: Server will restart")
             await websocket.close()
@@ -136,9 +154,12 @@ async def do(obj, username, websocket):
         case "shell":
             if username == "admin" or username == "debug":
                 return str(await wait_for_subprocess(obj))
-            else: return "[ERROR]: NOT AUTHORIZED"
-        case "get_file": return await get_file(obj, username)
-        case "send_file": return await recv_file(obj, username, websocket)
+            else:
+                return "[ERROR]: NOT AUTHORIZED"
+        case "get_file":
+            return await get_file(obj, username)
+        case "send_file":
+            return await recv_file(obj, username, websocket)
     return f"""[ERROR]: "{action}" is not a registered action"""
 
 def check_authorization(obj):
@@ -152,5 +173,6 @@ def check_authorization(obj):
     tokens = [i.split(",")[0] for i in csv]
     users = [i.split(",")[1] for i in csv]
     for i, token in enumerate(tokens):
-        if user_token == token: return users[i]
+        if user_token == token:
+            return users[i]
     return False

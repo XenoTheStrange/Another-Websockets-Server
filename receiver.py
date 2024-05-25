@@ -28,17 +28,12 @@ class WebsocketError(Exception):
 async def custom_handler(message, websocket):
     try:
         obj = json.loads(message)
-    except Exception as err:
-        #raise WebsocketError("Failed to decode JSON payload", websocket)
-        print("DEBUG")
-        print(message)
-        raise err
+    except Exception:
+        raise WebsocketError("Failed to decode JSON payload", websocket)
     username = actions.check_authorization(obj)
     if not username:
         raise WebsocketError("AUTH FAIL", websocket, json.dumps(obj))
     if "action" not in obj:
-        raise WebsocketError("'action' parameter missing from request", websocket)
-    if not isinstance(obj['action'], str):
         raise WebsocketError("'action' parameter missing from request", websocket)
     return await actions.do(obj, username, websocket)
 

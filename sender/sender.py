@@ -37,6 +37,7 @@ async def send_file(filepath, auth_token, websocket):
     for chunk in sender:
         await websocket.send(json.dumps(chunk))
         response = await websocket.recv()
+        logger.info(f"Sent part: {chunk['part']}")
         logger.debug(bytes(f"Received response: \"{response}\"","utf-8"))
         if "[ERROR]" in response:
             logger.error(bytes(f"An error occured: \"{response}\"" ,"utf-8"))
@@ -59,38 +60,27 @@ async def get_file(filename, auth_token, websocket, admin=False):
     response = await websocket.recv()
     while True:
         if "[ERROR]" in response:
-            print(response)
+            logger.error(response)
             break
         if "[INFO] DONE SENDING" in response:
             return response
         obj = json.loads(response)
-        print(f"Got part: {obj['part']}")
+        logger.info(f"Got part: {obj['part']}")
         recvfile = file_receiver(obj, filename.split("/")[-1], savepath=config.download_path)
         next = await recvfile.main()
         await websocket.send(next)
         response = await websocket.recv()
 
-async def shell_command(data, auth_token, websocket, task=False, name="shell_cmd"):
-    shelltype = "shell" if task == False else "shell_task"
+async def shell_command(data, auth_token, websocket):
     obj = {
     'auth_token':auth_token,
-    'action': "tasker",
-    'tasker-cmd': shelltype,
-    'name': name,
-    'data': "$&svdlm$&".join(data)
+    'action': "shell",
+    'data': data
     }
     payload = json.dumps(obj)
+    logger.debug(payload)
     response = await send_message(payload, websocket)
     return response
-
-async def check_task(taskname, auth_token, websocket):
-    obj = {
-    'auth_token':auth_token,
-    'action': "check_task",
-    'data': taskname
-    }
-    payload = json.dumps(obj)
-    return await send_message(payload, websocket)
 
 async def arbitrary_command(data, auth_token, websocket):
     obj = {
@@ -108,23 +98,28 @@ async def server_connect(host_url):
     socket = websockets.connect(host_url, ssl=ssl_context)
     return socket
 
+async def shell(auth_token, websocket):
+    command = input()
+    while not command == "exit":
+        response = await shell_command(command, auth_token, websocket)
+        logger.info(response)
+        command = input()
+
 @handleErrors
 async def main(auth_token, action, data):
     async with await server_connect(config.host_url) as websocket:
         match action:
             case "send_file":
-                print(await send_file(data[0], auth_token, websocket))
+                logger.info(await send_file(data[0], auth_token, websocket))
             case "get_file":
-                print(await get_file(data[0], auth_token, websocket))
-            case "admin_get_file":
-                print(await get_file(data[0], auth_token, websocket, admin=True))
+                logger.info(await get_file(data[0], auth_token, websocket))
+            case "shell_cmd":
+                logger.info(await shell_command(data[0], auth_token, websocket))
             case "shell":
-                print(await shell_command(data, auth_token, websocket))
-            case "shell_task":
-                print(await shell_command(data, auth_token, websocket, task=True))
+                await shell(auth_token, websocket)
             case _:
                 data = [action]+[data] if isinstance(data,str) else [action]+data #make sure data variable is a list of strings
-                print(await arbitrary_command(data, auth_token, websocket))
+                logger.info(await arbitrary_command(data, auth_token, websocket))
         await websocket.close()
 
 def print_help():

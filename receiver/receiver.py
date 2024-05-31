@@ -1,18 +1,38 @@
 #!/usr/bin/python3
-#
-import asyncio
-import websockets
-import json
-import sys
-import ssl
 
-import actions
+import asyncio, websockets, json
+import sys, os
+import ssl
+import importlib
+
 from utils import CustomLogger, WebsocketError, check_authorization
 import config
 
+sys.path.append("./actions")
 logger = CustomLogger("receiver", "info")
 
 uri, port = config.host_uri
+
+async def DoAction(obj, username, websocket):
+    data = obj['data'] if "data" in obj else ""
+    action = obj['action']
+    logger.debug(f"""user: {username}, action: {action}, data: {data} """)
+    admin = True if username in config.superusers else False
+
+    #Check if the action is a script in ./actions
+    custom_modules = ", ".join(sorted([i.replace(".py","") for i in os.listdir("./actions") if ".py" in i]))
+    if not f"{obj['action']}" in custom_modules:
+        return str(custom_modules)
+
+    # Import called script as module
+    spec = importlib.util.spec_from_file_location(
+        obj['action'], f"./actions/{obj['action']}.py"
+        )
+    called_script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(called_script)
+
+    # Call main function
+    return await called_script.main(obj, username, websocket, admin=admin)
 
 async def custom_handler(message, websocket):
     try:
@@ -24,7 +44,7 @@ async def custom_handler(message, websocket):
         raise WebsocketError("AUTH FAIL", websocket, json.dumps(obj))
     if "action" not in obj:
         raise WebsocketError("'action' parameter missing from request", websocket)
-    return await actions.do(obj, username, websocket)
+    return await DoAction(obj, username, websocket)
 
 async def process_message(websocket):
     message = await websocket.recv()
